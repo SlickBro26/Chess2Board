@@ -1,0 +1,1 @@
+pyinstaller --icon=icon.png --add-data "icon.png;." --noconsole --noconfirm main.py

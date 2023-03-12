@@ -1,16 +1,16 @@
 import os.path
-import sys
-import threading
-from selenium import webdriver
-import serial
+import chromedriver_autoinstaller
 import wx
-from selenium.common import NoSuchElementException, TimeoutException, NoSuchWindowException, InvalidSessionIdException, \
-    WebDriverException
+from selenium import webdriver
+from selenium.common import NoSuchElementException, TimeoutException, NoSuchWindowException
 from selenium.webdriver import ActionChains
+from selenium.webdriver.chrome.service import Service as ChromeService
+from subprocess import CREATE_NO_WINDOW
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.support import expected_conditions as ec
+from selenium.webdriver.support.wait import WebDriverWait
 
+chromedriver_autoinstaller.install()
 usernameFilename = 'config.ini'
 passwordFilename = 'setup.ini'
 
@@ -79,6 +79,8 @@ class MainFrame(wx.Frame):
         MoveTitle = wx.StaticText(pnl, label='Move in UCI:   ')
         self.MoveInput = wx.TextCtrl(pnl, style=wx.TE_PROCESS_ENTER)
         self.MoveInput.Bind(wx.EVT_TEXT_ENTER, self.OnInputMove)
+        self.MoveInput.Bind(wx.EVT_ENTER_WINDOW, self.OnHoverMove)
+        self.MoveInput.Bind(wx.EVT_LEAVE_WINDOW, self.OnStopHoverMove)
 
         # Create a sizer to manage the layout of child widgets
         MainText = wx.BoxSizer(wx.VERTICAL)
@@ -113,11 +115,12 @@ class MainFrame(wx.Frame):
         ysizer.Add(MoveYHolder, 0, wx.CENTER)
 
         pnl.SetSizer(ysizer)
+        self.Bind(wx.EVT_CLOSE, self.OnClose)
 
         # Create status bar
-        defaultStatusText = "Welcome to Chess2Board!"
+        self.defaultStatusText = "Welcome to Chess2Board!"
         self.CreateStatusBar()
-        self.SetStatusText(defaultStatusText)
+        self.SetStatusText(self.defaultStatusText)
 
     def OnInputMove(self, event):
         move = event.GetString()
@@ -142,6 +145,12 @@ class MainFrame(wx.Frame):
             wx.MessageBox("No window open to click on!")
         self.MoveInput.SetValue('')
 
+    def OnHoverMove(self, event):
+        self.StatusBar.SetStatusText("Input your move in UCI (e2e4, b1c3, etc.)")
+
+    def OnStopHoverMove(self, event):
+        self.StatusBar.SetStatusText(self.defaultStatusText)
+
     def OnChangeUsername(self, event):
         self.username = event.GetString()
         configFile = open(usernameFilename, 'w')
@@ -164,7 +173,7 @@ class MainFrame(wx.Frame):
         self.StatusBar.SetStatusText("Launch Chess.com to play against computers")
 
     def OnStopHoverComp(self, event):
-        self.StatusBar.SetStatusText("Welcome to Chess2Board!")
+        self.StatusBar.SetStatusText(self.defaultStatusText)
 
     def OnClickComp(self, event):
         if self.username == '' or self.password == '':
@@ -176,7 +185,7 @@ class MainFrame(wx.Frame):
         self.StatusBar.SetStatusText("Launch Chess.com to analyze moves")
 
     def OnStopHoverAnalysis(self, event):
-        self.StatusBar.SetStatusText("Welcome to Chess2Board!")
+        self.StatusBar.SetStatusText(self.defaultStatusText)
 
     def OnClickAnalysis(self, event):
         if self.username == '' or self.password == '':
@@ -184,16 +193,23 @@ class MainFrame(wx.Frame):
         else:
             self.Driver = openChessAnalysis(self.username, self.password, False)
 
+    def OnClose(self, event):
+        if self.Driver is not None:
+            self.Driver.quit()
+        self.Destroy()
+
 
 def openChessComp(username, password, Guest):
-    options = webdriver.ChromeOptions()
-    options.add_argument("--start-maximized")
+    chrome_service = ChromeService('chromedriver')
+    chrome_service.creationflags = CREATE_NO_WINDOW
     prefs = {"credentials_enable_service": False,
              "profile.password_manager_enabled": False}
+    options = webdriver.ChromeOptions()
+    options.add_argument("--start-maximized")
     options.add_experimental_option("prefs", prefs)
     options.add_experimental_option("useAutomationExtension", False)
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    Driver = webdriver.Chrome(options=options)
+    Driver = webdriver.Chrome(service=chrome_service, options=options)
     if not Guest:
         Driver.get("https://www.chess.com/login_and_go?returnUrl=https%3A//www.chess.com/play/computer")
         login = Driver.find_element(By.ID, "username")
@@ -216,14 +232,16 @@ def openChessComp(username, password, Guest):
 
 
 def openChessAnalysis(username, password, Guest):
-    options = webdriver.ChromeOptions()
-    options.add_argument("--start-maximized")
+    chrome_service = ChromeService('chromedriver')
+    chrome_service.creationflags = CREATE_NO_WINDOW
     prefs = {"credentials_enable_service": False,
              "profile.password_manager_enabled": False}
+    options = webdriver.ChromeOptions()
+    options.add_argument("--start-maximized")
     options.add_experimental_option("prefs", prefs)
     options.add_experimental_option("useAutomationExtension", False)
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    Driver = webdriver.Chrome(options=options)
+    Driver = webdriver.Chrome(service=chrome_service, options=options)
     if not Guest:
         Driver.get("https://www.chess.com/login_and_go?returnUrl=https%3A//www.chess.com/analysis")
         login = Driver.find_element(By.ID, "username")
