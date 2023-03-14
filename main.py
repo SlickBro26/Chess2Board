@@ -1,5 +1,9 @@
 import os.path
+import threading
+
 import chromedriver_autoinstaller
+import serial.tools.list_ports
+import serial
 import wx
 from selenium import webdriver
 from selenium.common import NoSuchElementException, TimeoutException, NoSuchWindowException
@@ -28,6 +32,7 @@ class MainFrame(wx.Frame):
     def __init__(self, *args, **kw):
         # ensure the parent's __init__ is called
         super(MainFrame, self).__init__(*args, **kw)
+        self.boardThread = None
         self.Driver = None
         width = 325
         height = 400
@@ -35,10 +40,10 @@ class MainFrame(wx.Frame):
         self.SetIcon(wx.Icon('icon.png'))
         self.SetBackgroundColour(wx.Colour(150, 150, 150))
 
-        # create a panel in the frame
+        # Create panel in frame
         pnl = wx.Panel(self)
 
-        # put some text with a larger bold font on it
+        # Main title
         st = wx.StaticText(pnl, label="Chess2Board")
         font = st.GetFont()
         font.PointSize += 10
@@ -82,38 +87,61 @@ class MainFrame(wx.Frame):
         self.MoveInput.Bind(wx.EVT_ENTER_WINDOW, self.OnHoverMove)
         self.MoveInput.Bind(wx.EVT_LEAVE_WINDOW, self.OnStopHoverMove)
 
-        # Create a sizer to manage the layout of child widgets
+        # Main title text sizer
         MainText = wx.BoxSizer(wx.VERTICAL)
         MainText.Add(st, wx.SizerFlags().Border(wx.TOP, 20))
 
+        # Login Sizer
         LoginHolder = wx.BoxSizer(wx.HORIZONTAL)
         LoginHolder.Add(loginTitle, 0, wx.CENTER)
         LoginHolder.Add(loginCtrl, 0, wx.CENTER)
 
+        # Password Sizer
         PasswordHolder = wx.BoxSizer(wx.HORIZONTAL)
         PasswordHolder.Add(passwordTitle, 0, wx.CENTER)
         PasswordHolder.Add(passwordCtrl, 0, wx.CENTER)
 
+        # Choice box for selecting connected serial device
+        self.devices = serial.tools.list_ports.comports()
+        i = 0
+        self.deviceNames = []
+        for _ in self.devices:
+            self.deviceNames.append(self.devices[i].description)
+            i += 1
+        self.Selection = wx.Choice(pnl)
+        self.Selection.AppendItems(self.deviceNames)
+        self.Selection.Bind(wx.EVT_CHOICE, self.OnChoice)
+        self.Selection.Bind(wx.EVT_ENTER_WINDOW, self.OnHoverChoice)
+        self.Selection.Bind(wx.EVT_LEAVE_WINDOW, self.OnStopHoverChoice)
+        selectionText = wx.StaticText(pnl, label='Select Board:  ')
+        selectionSizer = wx.BoxSizer()
+        selectionSizer.Add(selectionText, wx.SizerFlags().Border(wx.TOP, 30))
+        selectionSizer.Add(self.Selection, wx.SizerFlags().Border(wx.TOP, 25))
+
+        # Sizer to hold both previous sizers
         CredentialsHolder = wx.BoxSizer(wx.VERTICAL)
         CredentialsHolder.Add(LoginHolder, wx.SizerFlags().Border(wx.TOP, 25))
         CredentialsHolder.Add(PasswordHolder, wx.SizerFlags().Border(wx.TOP, 10))
 
+        # Play button sizer
         ButtonHolder = wx.BoxSizer(wx.HORIZONTAL)
         ButtonHolder.Add(AnalysisBtn, wx.SizerFlags().Border(wx.TOP, 25))
         ButtonHolder.Add(CompBtn, wx.SizerFlags().Border(wx.TOP | wx.LEFT, 25))
 
+        # Move input sizer
         MoveHolder = wx.BoxSizer(wx.HORIZONTAL)
         MoveYHolder = wx.BoxSizer(wx.VERTICAL)
         MoveHolder.Add(MoveTitle, 0, wx.CENTER)
         MoveHolder.Add(self.MoveInput, 0, wx.CENTER)
         MoveYHolder.Add(MoveHolder, wx.SizerFlags().Border(wx.TOP, 25))
 
+        # Main sizer to hold everything
         ysizer = wx.BoxSizer(wx.VERTICAL)
         ysizer.Add(MainText, 0, wx.CENTER)
         ysizer.Add(CredentialsHolder, 0, wx.CENTER)
         ysizer.Add(ButtonHolder, 0, wx.CENTER)
+        ysizer.Add(selectionSizer, 0, wx.CENTER)
         ysizer.Add(MoveYHolder, 0, wx.CENTER)
-
         pnl.SetSizer(ysizer)
         self.Bind(wx.EVT_CLOSE, self.OnClose)
 
@@ -121,6 +149,39 @@ class MainFrame(wx.Frame):
         self.defaultStatusText = "Welcome to Chess2Board!"
         self.CreateStatusBar()
         self.SetStatusText(self.defaultStatusText)
+
+    def RefreshDevices(self):
+        self.devices = serial.tools.list_ports.comports()
+        i = 0
+        self.deviceNames = []
+        for _ in self.devices:
+            self.deviceNames.append(self.devices[i].description)
+            i += 1
+        self.Selection.Clear()
+        self.Selection.AppendItems(self.deviceNames)
+        print(self.deviceNames)
+
+    def OnHoverChoice(self, event):
+        self.StatusBar.SetStatusText("Choose device to connect to as board")
+        selection = self.Selection.GetSelection()
+        self.devices = serial.tools.list_ports.comports()
+        i = 0
+        self.deviceNames = []
+        for _ in self.devices:
+            self.deviceNames.append(self.devices[i].description)
+            i += 1
+        self.Selection.Clear()
+        self.Selection.AppendItems(self.deviceNames)
+        self.Selection.SetSelection(selection)
+
+    def OnStopHoverChoice(self, event):
+        self.StatusBar.SetStatusText(self.defaultStatusText)
+
+    def OnChoice(self, event):
+        device = self.devices[self.Selection.GetSelection()].device
+        print(device)
+        self.boardThread = threading.Thread(target=readSerialMoves, args=(device, self.Driver))
+        self.boardThread.start()
 
     def OnInputMove(self, event):
         move = event.GetString()
@@ -271,6 +332,35 @@ def click_square(fromCol, fromRow, toCol, toRow, Driver):
     action_chains = ActionChains(Driver)
     action_chains.move_to_element_with_offset(elem, fromCol, fromRow).click().perform()
     action_chains.move_to_element_with_offset(elem, toCol, toRow).click().perform()
+
+
+def readSerialMoves(comPort, Driver):
+    print("started")
+    ser = serial.Serial(comPort)
+    while True:
+        move = ser.readline().decode()
+        move = move.replace("\r\n", "")
+        print(move)
+        if len(move) != 4:
+            wx.MessageBox("That is not a valid move!")
+            return
+        if Driver is None:
+            wx.MessageBox("No window open to click on!")
+            return
+        fromX = slice(0, 1)
+        fromx = ord(move[fromX]) - 96
+        fromY = slice(1, 2)
+        fromy = move[fromY]
+        toX = slice(2, 3)
+        tox = ord(move[toX]) - 96
+        toY = slice(3, 4)
+        toy = move[toY]
+        try:
+            click_square(int(fromx) * 99 - 443, int(fromy) * -99 + 443,
+                         int(tox) * 99 - 443, int(toy) * -99 + 443, Driver)
+        except NoSuchWindowException:
+            wx.MessageBox("No window open to click on!")
+        move = ''
 
 
 if __name__ == '__main__':
